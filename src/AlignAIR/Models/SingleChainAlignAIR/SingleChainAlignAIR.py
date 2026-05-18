@@ -62,7 +62,10 @@ class SingleChainAlignAIR(Model):
     def __init__(self, max_seq_length: int, dataconfig:DataConfig,
                  v_allele_latent_size: Optional[int] = None,
                  d_allele_latent_size: Optional[int] = None,
-                 j_allele_latent_size: Optional[int] = None):
+                 j_allele_latent_size: Optional[int] = None,
+                 use_aa_stream: bool = False,
+                 max_aa_seq_length: Optional[int] = None,
+                 aa_vocab_size: int = 23):
         """
         Initializes the SingleChainAlignAIR model.
 
@@ -84,6 +87,12 @@ class SingleChainAlignAIR(Model):
         self.dataconfig = dataconfig
         self.has_d_gene = self.dataconfig.metadata.has_d
         self.initializer = keras.initializers.GlorotUniform()
+
+        # --- AA stream configuration ---
+        self.use_aa_stream = use_aa_stream
+        self.aa_vocab_size = int(aa_vocab_size)
+        if use_aa_stream:
+            self.max_seq_length = int(max_aa_seq_length or self.max_seq_length // 3)
 
         # Allele counts and latent sizes
         self.v_allele_count = self.dataconfig.number_of_v_alleles
@@ -196,9 +205,10 @@ class SingleChainAlignAIR(Model):
 
     def _init_input_and_embedding_layers(self):
         """Initializes input and embedding layers."""
+        vocab_size = self.aa_vocab_size if self.use_aa_stream else 6
         self.input_layer = Input((self.max_seq_length, 1), name="seq_init")
         self.input_embeddings = TokenAndPositionEmbedding(
-            vocab_size=6, embed_dim=32, maxlen=self.max_seq_length, name="tokpos_emb"
+            vocab_size=vocab_size, embed_dim=32, maxlen=self.max_seq_length, name="tokpos_emb"
         )
 
     def _init_feature_extractors(self):
@@ -250,7 +260,7 @@ class SingleChainAlignAIR(Model):
         self.j_start_head = Dense(units, activation=None, name='j_start_logits')
         self.j_end_head = Dense(units, activation=None, name='j_end_logits')
 
-        if self.has_d_gene:
+        if self.has_d_gene:encode_and_equal_pad_sequence/home/ayelet/alignair_genairr
             self.d_start_head = Dense(units, activation=None, name='d_start_logits')
             self.d_end_head = Dense(units, activation=None, name='d_end_logits')
 
@@ -306,7 +316,7 @@ class SingleChainAlignAIR(Model):
         if self.has_d_gene:
             self.d_mask_layer = SoftCutoutLayer(gene='D', max_size=self.max_seq_length, k=3.0, name="d_soft_mask")
             self.d_mask_gate = Multiply(name="d_mask_gate")
-            self.d_mask_reshape = Reshape((self.max_seq_length, 1), name="d_mask_reshape")
+            self.d_mask_reshape = Reshape((self.max_seq_length, 1), name="d_masencode_and_equal_pad_sequence/home/ayelet/alignair_genairrk_reshape")
 
     def call(self, inputs, training=False):
         """

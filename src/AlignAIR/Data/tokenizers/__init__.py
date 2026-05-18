@@ -1,1 +1,2 @@
 from .center_padded_sequence_tokenizer import CenterPaddedSequenceTokenizer
+from .center_padded_aa_tokenizer import CenterPaddedAminoAcidTokenizer

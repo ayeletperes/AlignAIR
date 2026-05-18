@@ -7,6 +7,7 @@ class ColumnSet:
         """Initializes the ColumnSet based on whether it has a D segment."""
         # --- Standard attributes ---
         self.sequence: str = 'sequence'
+        self.sequence_aa: str = 'sequence_aa'
         self.v_call: str = 'v_call'
         self.j_call: str = 'j_call'
         self.productive: str = 'productive'
@@ -16,6 +17,7 @@ class ColumnSet:
         self.v_sequence_end: str = 'v_sequence_end'
         self.j_sequence_start: str = 'j_sequence_start'
         self.j_sequence_end: str = 'j_sequence_end'
+        self.junction_start: str = 'junction_start'
 
         # --- Conditional D-segment attributes ---
         if has_d:

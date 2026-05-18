@@ -195,7 +195,7 @@ class MultiDataConfigContainer:
     def number_of_j_alleles(self) -> int:
         """
         Get the total number of unique J alleles across all DataConfigs.
-        
+        SingleChainDataset.py
         Returns:
             int: Combined count of J alleles
         """

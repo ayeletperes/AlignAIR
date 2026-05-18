@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from ast import literal_eval  # safer than eval for parsing literal structures
 
 from .columnSet import ColumnSet
-from .tokenizers import CenterPaddedSequenceTokenizer
+from .tokenizers import CenterPaddedSequenceTokenizer, CenterPaddedAminoAcidTokenizer
 from .encoders import AlleleEncoder
 from .batch_readers import StreamingTableReader
 
@@ -20,16 +20,21 @@ class DatasetBase(ABC):
     and batch assembly logic.
     """
     def __init__(self, data_path, dataconfig: DataConfig, batch_size=64, max_sequence_length=512, use_streaming=False,
-                 nrows=None, seperator=',',required_data_columns=None):
+                 nrows=None, seperator=',',required_data_columns=None,
+                 max_aa_sequence_length=None, use_aa_stream=False):
 
         self.v_dict = None
         self.d_dict = None
         self.j_dict = None
 
         self.max_sequence_length = max_sequence_length
+        self.use_aa_stream = use_aa_stream
 
         self.dataconfig = dataconfig
         self.tokenizer = CenterPaddedSequenceTokenizer(max_length=max_sequence_length)
+        if self.use_aa_stream:
+            self.max_sequence_length = max_aa_sequence_length or (max_sequence_length // 3)
+            self.tokenizer = CenterPaddedAminoAcidTokenizer(max_length=self.max_sequence_length)
         self.allele_encoder = AlleleEncoder()
 
         self.seperator = seperator
@@ -114,20 +119,30 @@ class DatasetBase(ABC):
         and per-gene start/end coordinate columns (e.g. v_sequence_start).
         """
         batch = self.reader.get_batch(pointer)
-
-        sequences = batch['sequence']
+          
+        sequences = batch['sequence_aa'] if self.use_aa_stream else batch['sequence']
         encoded_sequences, paddings = self.tokenizer.encode_and_pad_center(sequences)
         pad_int = paddings.astype(np.int32)
 
+        frame_offset = None
+        if self.use_aa_stream:
+            # will break if junction_start is None, but then we won't have aa sequence either. This means no frame detect for translation
+            frame_offset = np.asarray(batch['junction_start'], dtype=np.int32) % 3
+            
         # Adjust gene coordinates in place
         for gene in self._loaded_genes:
             s_key = f'{gene}_sequence_start'
             e_key = f'{gene}_sequence_end'
             if s_key in batch:
                 arr = np.asarray(batch[s_key], dtype=np.int32)
+                if frame_offset is not None:
+                    # For AA stream, we need to adjust the start/end positions based on the frame offset and codon structure
+                    arr = np.maximum((arr - frame_offset) // 3, 0)
                 batch[s_key] = (arr + pad_int).astype(np.float32)
             if e_key in batch:
                 arr = np.asarray(batch[e_key], dtype=np.int32)
+                if frame_offset is not None:
+                    arr = np.maximum((arr - frame_offset) // 3, 0)
                 batch[e_key] = (arr + pad_int).astype(np.float32)
 
         # Indel counts (later: prefer a precomputed indel_count column)

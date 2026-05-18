@@ -2,10 +2,14 @@ import numpy as np
 import pandas as pd
 from Bio import SeqIO
 
+# TODO(aa-stream): import the shared tokenizers so inference-time and
+# training-time tokenization can't drift apart.
+# from .tokenizers import CenterPaddedSequenceTokenizer, CenterPaddedAminoAcidTokenizer
+
 
 class PredictionDataset:
 
-    def __init__(self, max_sequence_length):
+    def __init__(self, max_sequence_length, use_aa_stream=False):
         """
         This class is used to create a dataset for the prediction process of the AlignAIR models.
         It only loads in sequence and encodes them to the supported format for the model without preprocessing
@@ -16,17 +20,50 @@ class PredictionDataset:
 
         Args:
             max_sequence_length: The maximum length of the sequence used to train the AlignAIR model.
+            use_aa_stream: If True, expect AA input and tokenize with the AA tokenizer.
         """
+        self.use_aa_stream = use_aa_stream
         self.max_sequence_length = max_sequence_length
         self.max_seq_length = max_sequence_length
-        self.tokenizer_dictionary = {
-            "A": 1,
-            "T": 2,
-            "G": 3,
-            "C": 4,
-            "N": 5,
-            "P": 0,  # pad token
-        }
+        
+        if use_aa_stream:
+            self.tokenizer_dictionary = {
+                "A": 1,
+                "C": 2,
+                "D": 3,
+                "E": 4,
+                "F": 5,
+                "G": 6,
+                "H": 7,
+                "I": 8,
+                "K": 9,
+                "L": 10,
+                "M": 11,
+                "N": 12,
+                "P": 13,
+                "Q": 14,
+                "R": 15,
+                "S": 16,
+                "T": 17,
+                "V": 18,
+                "W": 19,
+                "Y": 20,
+                "*": 21,
+                "X": 22,
+                "_": 0,  # padding token
+            }
+            self.sequence_column = "sequence"
+        else:
+            self.tokenizer_dictionary = {
+                "A": 1,
+                "T": 2,
+                "G": 3,
+                "C": 4,
+                "N": 5,
+                "P": 0,  # pad token
+            }
+            self.sequence_column = "sequence"
+        
 
     def encode_and_equal_pad_sequence(self, sequence, return_padding=False):
         """Encodes a sequence of nucleotides and pads it to the specified maximum length, equally from both sides.
@@ -37,7 +74,7 @@ class PredictionDataset:
         Returns:
             A padded sequence, and the start and end indices of the unpadded sequence.
         """
-        encoded_sequence = np.array([self.tokenizer_dictionary[i] for i in sequence])
+        encoded_sequence = np.array([self.tokenizer_dictionary.get(i, self.tokenizer_dictionary.get('X', 0)) for i in sequence])
         padding_length = self.max_seq_length - len(encoded_sequence)
         iseven = padding_length % 2 == 0
         pad_size = padding_length // 2
@@ -79,7 +116,7 @@ class PredictionDataset:
 
     def _read_csv(self, file_path):
         """
-        Reads a CSV file and extracts the sequences from the 'sequence' column.
+        Reads a CSV file and extracts the sequences from the configured sequence column.
 
         Args:
             file_path: Path to the CSV file.
@@ -90,11 +127,16 @@ class PredictionDataset:
         df = pd.read_csv(file_path)
         if 'sequence' not in df.columns:
             raise ValueError("CSV file must contain a 'sequence' column.")
+        if self.use_aa_stream:
+            if 'sequence_aa' not in df.columns:
+                raise ValueError("CSV file must contain a 'sequence_aa' column for AA mode.")
+            else:
+                return df['sequence_aa'].tolist()
         return df['sequence'].tolist()
 
     def _read_tsv(self, file_path):
         """
-        Reads a TSV file and extracts the sequences from the 'sequence' column.
+        Reads a TSV file and extracts the sequences from the configured sequence column.
 
         Args:
             file_path: Path to the TSV file.
@@ -105,6 +147,11 @@ class PredictionDataset:
         df = pd.read_table(file_path)
         if 'sequence' not in df.columns:
             raise ValueError("TSV file must contain a 'sequence' column.")
+        if self.use_aa_stream:
+            if 'sequence_aa' not in df.columns:
+                raise ValueError("TSV file must contain a 'sequence_aa' column for AA mode.")
+            else:
+                df['sequence_aa'].tolist()
         return df['sequence'].tolist()
 
     def _read_fasta(self, file_path):
