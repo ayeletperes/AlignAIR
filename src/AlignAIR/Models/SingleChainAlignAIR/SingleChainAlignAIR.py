@@ -260,7 +260,7 @@ class SingleChainAlignAIR(Model):
         self.j_start_head = Dense(units, activation=None, name='j_start_logits')
         self.j_end_head = Dense(units, activation=None, name='j_end_logits')
 
-        if self.has_d_gene:encode_and_equal_pad_sequence/home/ayelet/alignair_genairr
+        if self.has_d_gene:
             self.d_start_head = Dense(units, activation=None, name='d_start_logits')
             self.d_end_head = Dense(units, activation=None, name='d_end_logits')
 
@@ -316,7 +316,7 @@ class SingleChainAlignAIR(Model):
         if self.has_d_gene:
             self.d_mask_layer = SoftCutoutLayer(gene='D', max_size=self.max_seq_length, k=3.0, name="d_soft_mask")
             self.d_mask_gate = Multiply(name="d_mask_gate")
-            self.d_mask_reshape = Reshape((self.max_seq_length, 1), name="d_masencode_and_equal_pad_sequence/home/ayelet/alignair_genairrk_reshape")
+            self.d_mask_reshape = Reshape((self.max_seq_length, 1), name="d_mask_reshape")
 
     def call(self, inputs, training=False):
         """
