@@ -43,6 +43,23 @@ class DatasetBase(ABC):
         self.batch_size = batch_size
         self.add_allele_dictionaries()
         self.register_alleles_to_ohe()
+
+        # AA-mode only: precompute AA-equivalence groups per gene so that
+        # ground-truth allele targets can be expanded to multi-hot over
+        # all AA-identical alleles. The model cannot distinguish alleles
+        # within an AA group, so penalizing it for picking the "wrong"
+        # one wastes loss signal.
+        self.aa_equiv = None
+        if self.use_aa_stream:
+            from GenAIRR.utilities.aa_equivalence import aa_equivalent_alleles
+            # MultiDataConfigContainer holds a list of dataconfigs; for
+            # single-chain training there is exactly one.
+            dc = self.dataconfig.dataconfigs[0] if hasattr(self.dataconfig, 'dataconfigs') else self.dataconfig
+            self.aa_equiv = {'V': aa_equivalent_alleles(dc, 'v'),
+                             'J': aa_equivalent_alleles(dc, 'j')}
+            if self.has_d:
+                self.aa_equiv['D'] = aa_equivalent_alleles(dc, 'd')
+
         self.data_path = data_path
 
         # Use unified reader: stream=True for streaming mode, False for in-memory mode
@@ -91,6 +108,22 @@ class DatasetBase(ABC):
     def encode_and_equal_pad_sequence(self, sequence):
         return self.tokenizer.encode_and_pad_center(sequence)
 
+    def _expand_aa_equiv(self, allele_set: set, gene: str) -> set:
+        """Expand each allele in ``allele_set`` to its AA-equivalence group.
+
+        Only meaningful in AA mode; ``self.aa_equiv`` is None in nt mode.
+        Alleles not present in the equivalence map (unexpected) pass
+        through unchanged.
+        """
+        mapping = self.aa_equiv[gene]
+        expanded = set()
+        for a in allele_set:
+            if a in mapping:
+                expanded |= mapping[a]
+            else:
+                expanded.add(a)
+        return expanded
+
     def get_ohe_reverse_mapping(self):
         return self.allele_encoder.get_reverse_mapping()
 
@@ -115,7 +148,7 @@ class DatasetBase(ABC):
         """Assemble a single training batch without pandas.
 
         raw_batch structure (dict[str, list]): produced by BatchReader implementations.
-        Required keys include: sequence, v_call, j_call, mutation_rate, productive, indels,
+        Required keys include: sequence, v_call, j_call, mutation_rate, productive, n_indels,
         and per-gene start/end coordinate columns (e.g. v_sequence_start).
         """
         batch = self.reader.get_batch(pointer)
@@ -124,33 +157,32 @@ class DatasetBase(ABC):
         encoded_sequences, paddings = self.tokenizer.encode_and_pad_center(sequences)
         pad_int = paddings.astype(np.int32)
 
-        frame_offset = None
-        if self.use_aa_stream:
-            # will break if junction_start is None, but then we won't have aa sequence either. This means no frame detect for translation
-            frame_offset = np.asarray(batch['junction_start'], dtype=np.int32) % 3
-            
-        # Adjust gene coordinates in place
+        # Adjust gene coordinates in place. In AA mode the CSV's
+        # *_sequence_start/end columns already hold AA-space indices
+        # (the preprocess_aa_training_data script converts them).
+        # In nt mode they hold nt-space indices. Either way, the pad
+        # offset comes from the active tokenizer in matching units.
         for gene in self._loaded_genes:
             s_key = f'{gene}_sequence_start'
             e_key = f'{gene}_sequence_end'
             if s_key in batch:
                 arr = np.asarray(batch[s_key], dtype=np.int32)
-                if frame_offset is not None:
-                    # For AA stream, we need to adjust the start/end positions based on the frame offset and codon structure
-                    arr = np.maximum((arr - frame_offset) // 3, 0)
                 batch[s_key] = (arr + pad_int).astype(np.float32)
             if e_key in batch:
                 arr = np.asarray(batch[e_key], dtype=np.int32)
-                if frame_offset is not None:
-                    arr = np.maximum((arr - frame_offset) // 3, 0)
                 batch[e_key] = (arr + pad_int).astype(np.float32)
 
         # Indel counts (later: prefer a precomputed indel_count column)
-        indel_counts = self._parse_indel_counts(batch['indels'])
+        indel_counts = self._parse_indel_counts(batch['n_indels'])
 
-        # Allele sets
+        # Allele sets. In AA mode, expand each ground-truth allele to
+        # its AA-equivalence group (all alleles with identical translated
+        # germline). The encoder already accepts a set per row.
         v_alleles = [set(s.split(',')) for s in batch['v_call']]
         j_alleles = [set(s.split(',')) for s in batch['j_call']]
+        if self.use_aa_stream:
+            v_alleles = [self._expand_aa_equiv(s, 'V') for s in v_alleles]
+            j_alleles = [self._expand_aa_equiv(s, 'J') for s in j_alleles]
 
         # Accept already-converted floats/bools for productive; fallback to string parsing
         def to_float_bool(v):
@@ -181,6 +213,8 @@ class DatasetBase(ABC):
 
         if self.has_d:
             d_alleles = [set(s.split(',')) for s in batch['d_call']]
+            if self.use_aa_stream:
+                d_alleles = [self._expand_aa_equiv(s, 'D') for s in d_alleles]
             y['d_allele'] = self.one_hot_encode_allele('D', d_alleles)
             y['d_start'] = np.asarray(batch['d_sequence_start'], np.float32).reshape(-1, 1)
             y['d_end']   = np.asarray(batch['d_sequence_end'],   np.float32).reshape(-1, 1)

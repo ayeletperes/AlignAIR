@@ -12,12 +12,11 @@ class ColumnSet:
         self.j_call: str = 'j_call'
         self.productive: str = 'productive'
         self.mutation_rate: str = 'mutation_rate'
-        self.indels: str = 'indels'
+        self.indels: str = 'n_indels'
         self.v_sequence_start: str = 'v_sequence_start'
         self.v_sequence_end: str = 'v_sequence_end'
         self.j_sequence_start: str = 'j_sequence_start'
         self.j_sequence_end: str = 'j_sequence_end'
-        self.junction_start: str = 'junction_start'
 
         # --- Conditional D-segment attributes ---
         if has_d:

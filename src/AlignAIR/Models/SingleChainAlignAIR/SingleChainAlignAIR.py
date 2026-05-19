@@ -64,7 +64,6 @@ class SingleChainAlignAIR(Model):
                  d_allele_latent_size: Optional[int] = None,
                  j_allele_latent_size: Optional[int] = None,
                  use_aa_stream: bool = False,
-                 max_aa_seq_length: Optional[int] = None,
                  aa_vocab_size: int = 23):
         """
         Initializes the SingleChainAlignAIR model.
@@ -91,8 +90,6 @@ class SingleChainAlignAIR(Model):
         # --- AA stream configuration ---
         self.use_aa_stream = use_aa_stream
         self.aa_vocab_size = int(aa_vocab_size)
-        if use_aa_stream:
-            self.max_seq_length = int(max_aa_seq_length or self.max_seq_length // 3)
 
         # Allele counts and latent sizes
         self.v_allele_count = self.dataconfig.number_of_v_alleles

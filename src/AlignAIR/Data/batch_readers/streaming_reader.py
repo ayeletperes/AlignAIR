@@ -83,7 +83,9 @@ class StreamingTableReader(BatchReader):
         def _to_int(x: Any) -> int:
             if x is None or x == '':
                 raise ValueError('Missing required numeric value')
-            return int(x)
+            # Accept float-formatted strings like "224.0" (pandas coerces
+            # int columns to float when any value is missing).
+            return int(float(x))
 
         def _to_float(x: Any) -> float:
             if x is None or x == '':
@@ -122,7 +124,7 @@ class StreamingTableReader(BatchReader):
         defaults: Dict[str, Converter] = {
             'mutation_rate': _to_float,
             'productive': _to_float_bool,
-            'indels': _to_indels,
+            'n_indels': _to_indels,
         }
         merged = dict(defaults)
         if user:
@@ -148,7 +150,7 @@ class StreamingTableReader(BatchReader):
             return 0.0
         if col == 'productive':
             return 0.0
-        if col == 'indels':
+        if col == 'n_indels':
             return {}
         return ''
 
