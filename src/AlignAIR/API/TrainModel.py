@@ -12,7 +12,6 @@ from pathlib import Path
 from AlignAIR.Data import SingleChainDataset, MultiChainDataset, MultiDataConfigContainer
 from AlignAIR.Models import SingleChainAlignAIR, MultiChainAlignAIR
 from AlignAIR.Trainers import Trainer
-from AlignAIR.Trainers.callbacks import FernsichtCallback
 import GenAIRR.data as genairr_data
 from GenAIRR.dataconfig import DataConfig
 
@@ -53,12 +52,6 @@ def parse_args():
                              "Expects a CSV preprocessed by tests/preprocess_aa_training_data.py.")
     parser.add_argument("--max_aa_sequence_length", type=int, default=None,
                         help="AA token length. Defaults to --max_sequence_length // 3 when --use_aa_stream is set.")
-    parser.add_argument("--use_fernsicht", action='store_true',
-                        help="Enable the optional Fernsicht remote progress viewer. "
-                             "Off by default — on some TF versions, fernsicht's WebRTC "
-                             "transport segfaults during model.fit setup. Opt in only "
-                             "after verifying it works on the target machine.")
-
     args = parser.parse_args()
     # Argument validation
     if len(args.train_datasets) != len(args.genairr_dataconfigs):
@@ -187,27 +180,6 @@ def main():
     trainer = Trainer(model=model, session_path=args.session_path, model_name=args.model_name)
 
     callbacks = [reduce_lr, model_checkpoint_callback]
-    if args.use_fernsicht:
-        fernsicht_cb = FernsichtCallback(
-            desc=f"{args.model_name} epochs",
-            total_epochs=args.epochs,
-            disable=False,
-        )
-        callbacks.append(fernsicht_cb)
-    else:
-        # Default: print a simple "how to tail" banner so the SLURM log has
-        # an obvious monitoring hint near the top.
-        job_id = os.environ.get("SLURM_JOB_ID")
-        if job_id:
-            banner = "=" * 70
-            print(
-                f"\n{banner}\n"
-                f"[monitor] live progress in this run's SLURM log:\n"
-                f"   tail -f slurm-alignair-aa-{job_id}.out\n"
-                f"   squeue -u $USER -j {job_id}\n"
-                f"{banner}\n",
-                flush=True,
-            )
 
     trainer.train(
         train_dataset=train_dataset,
