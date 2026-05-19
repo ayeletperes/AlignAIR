@@ -282,10 +282,16 @@ class DatasetBase(ABC):
         return dataset
 
     def generate_model_params(self):
-        params =  {
+        params = {
             "max_seq_length": self.max_sequence_length,
-            'dataconfig':self.dataconfig
+            'dataconfig': self.dataconfig,
         }
+        # In AA mode, self.max_sequence_length was already overwritten to the
+        # AA length in __init__, so the model picks up the right input length
+        # from max_seq_length alone. We just need to flag the mode so the
+        # model picks the AA vocab (23) instead of the nt vocab (6).
+        if self.use_aa_stream:
+            params['use_aa_stream'] = True
         return params
 
     def __len__(self):

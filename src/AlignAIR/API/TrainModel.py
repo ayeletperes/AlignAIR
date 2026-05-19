@@ -12,6 +12,7 @@ from pathlib import Path
 from AlignAIR.Data import SingleChainDataset, MultiChainDataset, MultiDataConfigContainer
 from AlignAIR.Models import SingleChainAlignAIR, MultiChainAlignAIR
 from AlignAIR.Trainers import Trainer
+from AlignAIR.Trainers.callbacks import FernsichtCallback
 import GenAIRR.data as genairr_data
 from GenAIRR.dataconfig import DataConfig
 
@@ -47,6 +48,13 @@ def parse_args():
                         help="Total number of samples to process per epoch.")
     parser.add_argument("--max_sequence_length", type=int, default=576,
                         help="Maximum input sequence length for the model.")
+    parser.add_argument("--use_aa_stream", action='store_true',
+                        help="Train the amino-acid variant of AlignAIR (vocab=23, length=max_sequence_length//3). "
+                             "Expects a CSV preprocessed by tests/preprocess_aa_training_data.py.")
+    parser.add_argument("--max_aa_sequence_length", type=int, default=None,
+                        help="AA token length. Defaults to --max_sequence_length // 3 when --use_aa_stream is set.")
+    parser.add_argument("--no_fernsicht", action='store_true',
+                        help="Disable the optional Fernsicht remote progress viewer.")
 
     args = parser.parse_args()
     # Argument validation
@@ -108,6 +116,11 @@ def build_metrics_dict(dataset) -> dict:
 def create_dataset(is_multi_chain, data_paths, dataconfigs, args):
     """Factory function to create the correct dataset object."""
     if is_multi_chain:
+        if args.use_aa_stream:
+            raise NotImplementedError(
+                "--use_aa_stream is single-chain only for now. "
+                "Pass a single training dataset/dataconfig pair."
+            )
         return MultiChainDataset(
             data_paths=data_paths, dataconfigs=dataconfigs, batch_size=args.batch_size,
             max_sequence_length=args.max_sequence_length, use_streaming=True
@@ -115,7 +128,9 @@ def create_dataset(is_multi_chain, data_paths, dataconfigs, args):
     else:
         return SingleChainDataset(
             data_path=data_paths[0], dataconfig=dataconfigs, batch_size=args.batch_size,
-            max_sequence_length=args.max_sequence_length, use_streaming=True
+            max_sequence_length=args.max_sequence_length, use_streaming=True,
+            use_aa_stream=args.use_aa_stream,
+            max_aa_sequence_length=args.max_aa_sequence_length,
         )
 
 
@@ -168,13 +183,21 @@ def main():
 
     trainer = Trainer(model=model, session_path=args.session_path, model_name=args.model_name)
 
+    callbacks = [reduce_lr, model_checkpoint_callback]
+    fernsicht_cb = FernsichtCallback(
+        desc=f"{args.model_name} epochs",
+        total_epochs=args.epochs,
+        disable=args.no_fernsicht,
+    )
+    callbacks.append(fernsicht_cb)
+
     trainer.train(
         train_dataset=train_dataset,
         validation_dataset=validation_dataset,
         epochs=args.epochs,
         samples_per_epoch=args.samples_per_epoch,
         batch_size=args.batch_size,
-        callbacks=[reduce_lr, model_checkpoint_callback]
+        callbacks=callbacks,
     )
 
     final_weights_path = Path(args.session_path) / f"{args.model_name}_final.weights.h5"
