@@ -9,27 +9,34 @@ logger = logging.getLogger(__name__)
 
 
 # Fernsicht is an optional remote progress viewer
-# (https://github.com/MuteJester/Fernsicht). It's imported lazily inside
-# the callback because importing it after TensorFlow at module load time
-# can race the asyncio / WebRTC event loop fernsicht starts and exit the
-# process silently. The lazy import also keeps the optional dep truly
-# optional — uninstalled is fine, --no_fernsicht is fine, no early load.
+# (https://github.com/MuteJester/Fernsicht). It runs an asyncio + WebRTC
+# background transport which, on some configurations, races TF's training
+# threads and segfaults the process partway through model.fit. To stay
+# safe by default we:
+#   1. Lazy-import fernsicht only when the callback is constructed (not at
+#      module load), so plain `import AlignAIR.API.TrainModel` is unaffected.
+#   2. Print the room URL during __init__ (which runs in main(), BEFORE
+#      model.fit is called) — that way the URL always reaches stdout/SLURM
+#      logs even if training crashes later.
+#   3. Close the WebRTC transport right after grabbing the URL, so it can't
+#      race TF. Cost: no live per-epoch updates pushed to the room. Benefit:
+#      stable training. The room URL still resolves to the Fernsicht viewer.
 
 
 class FernsichtCallback(tf.keras.callbacks.Callback):
-    """Stream per-epoch training metrics to a Fernsicht remote progress bar.
+    """Generate a Fernsicht room URL and print it to stdout.
 
-    Use to watch a long McCleary GPU run from anywhere (the Fernsicht
-    relay handles NAT/firewall traversal). The callback degrades to a
-    no-op if ``fernsicht`` isn't importable, so it's safe to include
-    unconditionally.
+    Note: this used to push per-epoch metrics to the room, but the WebRTC
+    transport conflicts with TF's training threads (segfault). For now the
+    callback only generates the URL and prints it; the room stays valid as
+    a viewer landing page but doesn't receive live updates. Watch the
+    SLURM stdout (or `tail -f slurm-alignair-aa-*.out`) for the per-epoch
+    Keras progress instead.
 
     Args:
-        desc: Short label shown alongside the remote bar
-            (e.g. ``"alignair-aa epochs"``).
+        desc: Short label shown alongside the remote bar (e.g.
+            ``"alignair-aa epochs"``).
         total_epochs: Total epochs the bar should advance through.
-            Defaults to whatever ``model.fit`` reports via the
-            ``epochs`` key in ``on_train_begin``'s logs.
         disable: Force-disable even if Fernsicht is installed.
     """
 
@@ -39,56 +46,54 @@ class FernsichtCallback(tf.keras.callbacks.Callback):
         self.desc = desc
         self.total_epochs = total_epochs
         self.disable = disable
-        self._bar = None
+        self._url = None
 
-    def on_train_begin(self, logs=None):
         if self.disable:
             return
+
         try:
-            # Lazy import: fernsicht starts an asyncio/WebRTC loop on import
-            # which has caused silent process exit when imported alongside
-            # TensorFlow at module load. Importing here keeps everything
-            # downstream of `import AlignAIR.API.TrainModel` safe.
             from fernsicht import manual as _manual
         except Exception as exc:  # noqa: BLE001
-            logger.info("Fernsicht not available (%s); disabling remote progress bar.", exc)
+            logger.info("Fernsicht not available (%s); skipping remote progress URL.", exc)
             self.disable = True
             return
 
-        total = self.total_epochs
-        if total is None and self.params:
-            total = self.params.get("epochs")
+        bar = None
         try:
-            self._bar = _manual(total=total, desc=self.desc, unit="ep")
+            bar = _manual(total=total_epochs, desc=desc, unit="ep")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("FernsichtCallback failed to start (%s); disabling.", exc)
-            self._bar = None
+            logger.warning("FernsichtCallback failed to start (%s); skipping URL.", exc)
             self.disable = True
-
-    def on_epoch_end(self, epoch, logs=None):
-        if self._bar is None:
             return
-        logs = logs or {}
-        # Keep the postfix small — the remote viewer truncates long strings.
-        postfix = {
-            k: float(v)
-            for k, v in logs.items()
-            if k in ("loss", "val_loss", "segmentation_loss",
-                     "classification_loss", "v_allele_auc", "j_allele_auc")
-            and isinstance(v, (int, float))
-        }
-        try:
-            self._bar.update(1, **postfix)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("FernsichtCallback update failed (%s); continuing.", exc)
 
-    def on_train_end(self, logs=None):
-        if self._bar is None:
-            return
+        self._url = getattr(bar, "url", None)
+
+        # Tear down the WebRTC transport immediately. The room URL remains
+        # valid for viewers; we just don't push live updates. This avoids
+        # the asyncio/aiortc + TF training-thread race that segfaults
+        # mid-fit on some configurations.
         try:
-            close = getattr(self._bar, "close", None)
+            close = getattr(bar, "close", None)
             if callable(close):
                 close()
         except Exception:  # noqa: BLE001
             pass
-        self._bar = None
+
+        if self._url:
+            banner = "=" * 70
+            print(
+                f"\n{banner}\n[fernsicht] monitor this run at: {self._url}\n{banner}\n",
+                flush=True,
+            )
+
+    def on_train_begin(self, logs=None):
+        # The URL was already printed in __init__; if it didn't print there,
+        # there's no useful URL to surface here either.
+        return
+
+    def on_epoch_end(self, epoch, logs=None):
+        # Live updates intentionally disabled — see module docstring.
+        return
+
+    def on_train_end(self, logs=None):
+        return
